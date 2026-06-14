@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+langchain-community
+langchain-groq
+langchain-huggingface
+faiss-cpu
+youtube-transcript-api
+python-dotenv
+pydantic
