@@ -6,7 +6,7 @@ from urllib.parse import urlparse, parse_qs
 from dotenv import load_dotenv
 
 from youtube_transcript_api import YouTubeTranscriptApi
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 # SWITCHED: Using the online API inference instead of loading heavy local models
 from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 from langchain_community.vectorstores import FAISS
