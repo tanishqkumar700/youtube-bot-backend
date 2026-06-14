@@ -54,28 +54,44 @@ def extract_video_id(url: str) -> str:
     return None
 
 @app.post("/process_video")
-async def process_video(payload: VideoRequest):
-    video_id = extract_video_id(payload.url)
-    if not video_id:
-        raise HTTPException(status_code=400, detail="Invalid URL")
-    
-    if video_id in active_sessions:
-        return {"status": "success", "video_id": video_id}
-    
+async def process_video(request: VideoRequest):
     try:
-        ytt_api = YouTubeTranscriptApi()
-        transcript_list = ytt_api.fetch(video_id, languages=["en"])
-        raw_text = " ".join(chunk.text for chunk in transcript_list)
+        url = request.url
+        print(f"📥 Processing URL: {url}")
         
+        # 1. Video ID parsing logic check
+        if "v=" in url:
+            video_id = url.split("v=")[1].split("&")[0]
+        elif "youtu.be/" in url:
+            video_id = url.split("youtu.be/")[1].split("?")[0]
+        else:
+            raise HTTPException(status_code=400, detail="Invalid YouTube URL format")
+            
+        print(f"🎥 Extracted Video ID: {video_id}")
+        
+        # 2. Fetch transcript with fallback language option
+        try:
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'hi'])
+        except Exception as e:
+            print(f"❌ Transcript API Failed: {str(e)}")
+            return {"status": "error", "message": f"Transcript not available for this video: {str(e)}"}, 400
+
+        full_text = " ".join([item['text'] for item in transcript_list])
+        
+        # 3. Text Splitting
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        documents = text_splitter.create_documents([raw_text])
+        docs = text_splitter.create_documents([full_text])
         
-        vector_store = FAISS.from_documents(documents, embeddings_model)
-        active_sessions[video_id] = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+        # 4. Vector Store Generation
+        global db
+        db = FAISS.from_documents(docs, embeddings_model)
         
+        print("✅ Vector Index Created Successfully!")
         return {"status": "success", "video_id": video_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        
+    except Exception as main_err:
+        print(f"💥 Critical Crash on Server: {str(main_err)}")
+        raise HTTPException(status_code=500, detail=str(main_err))
 
 @app.post("/ask_question")
 async def ask_question(payload: QuestionRequest):
