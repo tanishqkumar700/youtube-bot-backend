@@ -6,8 +6,9 @@ from urllib.parse import urlparse, parse_qs
 from dotenv import load_dotenv
 
 from youtube_transcript_api import YouTubeTranscriptApi
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+# SWITCHED: Using the online API inference instead of loading heavy local models
+from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
@@ -26,9 +27,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-print("⏳ Initializing Embeddings...")
-embeddings_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-print("✅ Embeddings Ready.")
+print("⏳ Initializing Lightweight Cloud Embeddings API...")
+# This hits an external API endpoint instead of downloading heavy model weights to your server RAM
+embeddings_model = HuggingFaceInferenceAPIEmbeddings(
+    api_key=os.getenv("GROQ_API_KEY"), # We can pass your key or leave it blank for free tier limits
+    model_name="sentence-transformers/all-MiniLM-L6-v2"
+)
+print("✅ Cloud Embeddings Ready.")
 
 active_sessions = {}
 
