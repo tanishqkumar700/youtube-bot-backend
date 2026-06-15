@@ -69,7 +69,7 @@ async def process_video(request: VideoRequest):
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Cloud IP is blocked by YouTube. Please update Extension frontend: {str(e)}")
 
-        if not full_text or len(full_text).strip() == "":
+        if not full_text or full_text.strip() == "":
             raise HTTPException(status_code=400, detail="Transcript content is empty.")
 
         # 3. Document Chunking
