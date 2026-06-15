@@ -9,4 +9,3 @@ langchain-text-splitters
 langchain-core
 langchain-groq
 faiss-cpu
-groq

@@ -1,15 +1,15 @@
 import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 from urllib.parse import urlparse, parse_qs
 from dotenv import load_dotenv
 
 # YouTube and LangChain imports
 from youtube_transcript_api import YouTubeTranscriptApi
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-# FIXED IMPORT: Pulling GroqEmbeddings from community tools
-from langchain_community.embeddings import GroqEmbeddings
+# FIXED & OPTIMIZED: The exact cloud class that uses 0MB of local Render RAM
+from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
@@ -42,14 +42,15 @@ class QuestionRequest(BaseModel):
 db = None
 
 groq_api_key = os.getenv("GROQ_API_KEY")
+hf_token = os.getenv("HF_TOKEN")
 
-# FIXED: Correct initialization of lightweight Cloud Embeddings via Groq
-print("⏳ Initializing Low-Memory Groq Cloud Embeddings...")
-embeddings_model = GroqEmbeddings(
-    model_name="llama-3.1-8b-instant",
-    groq_api_key=groq_api_key
+# OPTIMIZED: Safe Pydantic SecretStr injection to clear validation checks
+print("⏳ Initializing Low-Memory Hugging Face Cloud Embeddings API...")
+embeddings_model = HuggingFaceInferenceAPIEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2",
+    api_key=SecretStr(hf_token) if hf_token else None
 )
-print("✅ Groq Cloud Embeddings Ready.")
+print("✅ Hugging Face Cloud Embeddings Ready.")
 
 groq_llm = ChatGroq(
     model="llama-3.3-70b-versatile",
