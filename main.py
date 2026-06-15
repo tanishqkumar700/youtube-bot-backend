@@ -34,8 +34,70 @@ app.add_middleware(
 )
 
 # Data Validation Models
+# Validation model ko update karo taaki direct transcript accept ho sake
 class VideoRequest(BaseModel):
     url: str
+    transcript_text: str = None  # Extension se direct text lene ke liye
+
+@app.post("/process_video")
+async def process_video(request: VideoRequest):
+    try:
+        url = request.url
+        print(f"📥 Processing URL request: {url}")
+        
+        # Parsing Video ID
+        if "v=" in url:
+            video_id = url.split("v=")[1].split("&")[0]
+        elif "youtu.be/" in url:
+            video_id = url.split("youtu.be/")[1].split("?")[0]
+        else:
+            raise HTTPException(status_code=400, detail="Invalid YouTube URL format")
+            
+        print(f"🎥 Video ID: {video_id}")
+        
+        # EXTENSION FALLBACK STEP: Agar text frontend se aaya hai toh wahi use karo
+        if request.transcript_text:
+            full_text = request.transcript_text
+            print("📝 Received raw transcript directly from Chrome Extension context.")
+        else:
+            # Agar koi purana client hit kare toh low-level client execute karein
+            try:
+                api_client = YouTubeTranscriptApi()
+                raw_transcript_data = api_client.list(video_id)
+                transcript_list = raw_transcript_data.fetch()
+                full_text = " ".join([item['text'] for item in transcript_list])
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Cloud IP is blocked by YouTube. Please update Extension frontend: {str(e)}")
+
+        if not full_text or len(full_text).strip() == "":
+            raise HTTPException(status_code=400, detail="Transcript content is empty.")
+
+        # 3. Document Chunking
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        docs = text_splitter.create_documents([full_text])
+        print(f"✂️ Total split chunks created: {len(docs)}")
+        
+        # 4. Building Vector Store Safely using Batches
+        global db
+        batch_size = 32
+        
+        print(f"🚀 Embedding initial block...")
+        db = FAISS.from_documents(docs[:batch_size], embeddings_model)
+        
+        for i in range(batch_size, len(docs), batch_size):
+            batch = docs[i:i + batch_size]
+            db.add_documents(batch)
+            time.sleep(0.3)
+        
+        print("✅ Vector Index Active and Ready!")
+        return {"status": "success", "video_id": video_id}
+        
+    except HTTPException as http_err:
+        raise http_err
+    except Exception as main_err:
+        print(f"💥 Backend Crash: {str(main_err)}")
+        raise HTTPException(status_code=500, detail=str(main_err))
+
 
 class QuestionRequest(BaseModel):
     video_id: str
