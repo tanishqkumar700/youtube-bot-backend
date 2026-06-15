@@ -2,10 +2,11 @@ fastapi
 uvicorn
 pydantic
 python-dotenv
-youtube-transcript-api==0.6.2
+
 langchain
 langchain-community
-langchain-text-splitters
 langchain-core
+langchain-text-splitters
 langchain-groq
-rank_bm25
+
+rank-bm25

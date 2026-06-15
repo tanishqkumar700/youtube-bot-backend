@@ -1,16 +1,25 @@
 import os
+import re
+import time
+from typing import Dict
+
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from dotenv import load_dotenv
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.retrievers import BM25Retriever
-from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
+from langchain_groq import ChatGroq
 
 load_dotenv()
+
 app = FastAPI()
+
+# --------------------------------------------------
+# CORS
+# --------------------------------------------------
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,94 +29,224 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --------------------------------------------------
+# ENV CHECK
+# --------------------------------------------------
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+if not GROQ_API_KEY:
+    raise RuntimeError(
+        "GROQ_API_KEY environment variable is missing."
+    )
+
+# --------------------------------------------------
+# LLM
+# --------------------------------------------------
+
+llm = ChatGroq(
+    model="llama-3.3-70b-versatile",
+    temperature=0.2,
+    groq_api_key=GROQ_API_KEY
+)
+
+# --------------------------------------------------
+# MODELS
+# --------------------------------------------------
+
 class VideoRequest(BaseModel):
     url: str
-    transcript_text: str = None
+    transcript_text: str
+
 
 class QuestionRequest(BaseModel):
     video_id: str
     question: str
 
-retriever_store = None
 
-groq_api_key = os.getenv("GROQ_API_KEY")
-groq_llm = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    temperature=0.2,
-    groq_api_key=groq_api_key
-)
+# --------------------------------------------------
+# MEMORY STORE
+# --------------------------------------------------
+
+retriever_store: Dict = {}
+
+SESSION_EXPIRY_SECONDS = 1800
+
+# --------------------------------------------------
+# HELPERS
+# --------------------------------------------------
+
+def cleanup_old_sessions():
+    current_time = time.time()
+
+    expired = []
+
+    for video_id, data in retriever_store.items():
+        if current_time - data["created_at"] > SESSION_EXPIRY_SECONDS:
+            expired.append(video_id)
+
+    for video_id in expired:
+        del retriever_store[video_id]
+
+    if expired:
+        print(f"🗑 Removed {len(expired)} expired sessions")
+
+
+def extract_video_id(url: str):
+
+    patterns = [
+        r"v=([^&]+)",
+        r"youtu\.be/([^?&]+)"
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+
+    raise HTTPException(
+        status_code=400,
+        detail="Invalid YouTube URL"
+    )
+
+
+# --------------------------------------------------
+# HEALTH
+# --------------------------------------------------
 
 @app.get("/")
 def home():
-    return {"status": "healthy", "message": "YouTube Pure-Engine Bot Active!"}
+    return {
+        "status": "healthy",
+        "message": "YouTube QA Backend Running"
+    }
+
+
+# --------------------------------------------------
+# PROCESS VIDEO
+# --------------------------------------------------
 
 @app.post("/process_video")
 async def process_video(request: VideoRequest):
-    global retriever_store
-    try:
-        url = request.url
-        if "v=" in url:
-            video_id = url.split("v=")[1].split("&")[0]
-        elif "youtu.be/" in url:
-            video_id = url.split("youtu.be/")[1].split("?")[0]
-        else:
-            raise HTTPException(status_code=400, detail="Invalid YouTube URL format")
-            
-        if request.transcript_text:
-            full_text = request.transcript_text
-        else:
-            raise HTTPException(status_code=400, detail="Transcript text required from frontend.")
 
-        if not full_text or full_text.strip() == "":
-            raise HTTPException(status_code=400, detail="Transcript is empty.")
+    cleanup_old_sessions()
 
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        docs = text_splitter.create_documents([full_text])
-        
-        retriever_store = BM25Retriever.from_documents(docs)
-        retriever_store.k = 3
-        
-        print("✅ Context Indexing Ready!")
-        return {"status": "success", "video_id": video_id}
-        
-    except HTTPException as http_err:
-        raise http_err
-    except Exception as main_err:
-        raise HTTPException(status_code=500, detail=str(main_err))
+    transcript = request.transcript_text.strip()
+
+    if not transcript:
+        raise HTTPException(
+            status_code=400,
+            detail="Transcript is empty."
+        )
+
+    video_id = extract_video_id(request.url)
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200
+    )
+
+    docs = text_splitter.create_documents(
+        [transcript]
+    )
+
+    retriever = BM25Retriever.from_documents(docs)
+
+    retriever.k = 3
+
+    retriever_store[video_id] = {
+        "retriever": retriever,
+        "created_at": time.time()
+    }
+
+    print(
+        f"✅ Indexed video {video_id} "
+        f"with {len(docs)} chunks"
+    )
+
+    return {
+        "status": "success",
+        "video_id": video_id,
+        "chunks": len(docs)
+    }
+
+
+# --------------------------------------------------
+# ASK QUESTION
+# --------------------------------------------------
 
 @app.post("/ask_question")
 async def ask_question(request: QuestionRequest):
-    global retriever_store
-    if retriever_store is None:
-        raise HTTPException(status_code=400, detail="No video context mapped yet.")
-    
-    try:
-        print(f"❓ Fetching context for question: {request.question}")
-        relevant_docs = retriever_store.invoke(request.question)
-        context = "\n\n".join(doc.page_content for doc in relevant_docs)
-        
-        template = """
-        You are a helpful AI assistant that answers questions accurately based ONLY on the provided context transcript from a YouTube video.
-        If you do not know the answer, say "This information is not available in the video transcript." Do not invent facts.
 
-        Context:
-        {context}
+    cleanup_old_sessions()
 
-        Question: 
-        {question}
+    if request.video_id not in retriever_store:
+        raise HTTPException(
+            status_code=404,
+            detail="Video session not found. Reprocess the video."
+        )
 
-        Helpful Answer:
+    retriever = retriever_store[
+        request.video_id
+    ]["retriever"]
+
+    relevant_docs = retriever.invoke(
+        request.question
+    )
+
+    if not relevant_docs:
+        return {
+            "status": "success",
+            "answer": (
+                "This information is not available "
+                "in the video transcript."
+            )
+        }
+
+    context = "\n\n".join(
+        doc.page_content
+        for doc in relevant_docs
+    )
+
+    prompt = PromptTemplate.from_template(
         """
-        # Formatted string prompt layout
-        prompt_content = TemplateContent = PromptTemplate.from_template(template).format(context=context, question=request.question)
-        
-        # FIXED: Using standard .invoke() wrapper to compile Groq response
-        response = groq_llm.invoke(prompt_content)
-        response_text = response.content
-        
-        print("⚡ Response compiled successfully via Groq LLM.")
-        return {"status": "success", "answer": response_text}
-        
-    except Exception as e:
-        print(f"💥 QA Pipeline Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+You are a YouTube transcript question-answering assistant.
+
+IMPORTANT RULES:
+
+1. Answer ONLY using the provided transcript context.
+2. Never invent information.
+3. Never use outside knowledge.
+4. If the answer cannot be found in the context,
+   respond exactly:
+
+This information is not available in the video transcript.
+
+CONTEXT:
+{context}
+
+QUESTION:
+{question}
+
+ANSWER:
+"""
+    )
+
+    final_prompt = prompt.format(
+        context=context,
+        question=request.question
+    )
+
+    response = llm.invoke(final_prompt)
+
+    return {
+        "status": "success",
+        "answer": response.content
+    }
+
+
+# --------------------------------------------------
+# STARTUP LOG
+# --------------------------------------------------
+
+print("🚀 YouTube QA Backend Ready")
