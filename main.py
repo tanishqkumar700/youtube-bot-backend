@@ -8,10 +8,9 @@ from dotenv import load_dotenv
 # YouTube and LangChain imports
 from youtube_transcript_api import YouTubeTranscriptApi
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-# FIXED: Switched from Inference API to the free, local embedding class
-from langchain_community.embeddings import HuggingFaceEmbeddings
+# OPTIMIZED: Using Groq for BOTH Embeddings and LLM to save RAM
+from langchain_groq import GroqEmbeddings, ChatGroq
 from langchain_community.vectorstores import FAISS
-from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
@@ -41,14 +40,16 @@ class QuestionRequest(BaseModel):
 # Global instance for single-user prototyping
 db = None
 
-# FIXED: No Hugging Face Cloud API Key needed anymore
-print("⏳ Initializing Free Local Embeddings Engine...")
-embeddings_model = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
-print("✅ Local Embeddings Ready.")
-
 groq_api_key = os.getenv("GROQ_API_KEY")
+
+# OPTIMIZED: Using Groq's cloud embeddings instead of loading models into RAM
+print("⏳ Initializing Ultra-Lightweight Groq Cloud Embeddings...")
+embeddings_model = GroqEmbeddings(
+    model_name="llama-3.1-8b-instant",
+    groq_api_key=groq_api_key
+)
+print("✅ Groq Cloud Embeddings Ready.")
+
 groq_llm = ChatGroq(
     model="llama-3.3-70b-versatile",
     temperature=0.2,
@@ -151,4 +152,3 @@ async def ask_question(request: QuestionRequest):
     except Exception as e:
         print(f"💥 QA Pipeline Exception: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-    
