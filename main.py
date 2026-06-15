@@ -1,14 +1,17 @@
 import os
+import time
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, SecretStr
 from urllib.parse import urlparse, parse_qs
 from dotenv import load_dotenv
 
-# YouTube and LangChain imports
+# Explicit clean library imports
+import youtube_transcript_api
 from youtube_transcript_api import YouTubeTranscriptApi
+
+# LangChain components
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-# FIXED & OPTIMIZED: The exact cloud class that uses 0MB of local Render RAM
 from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
@@ -44,7 +47,6 @@ db = None
 groq_api_key = os.getenv("GROQ_API_KEY")
 hf_token = os.getenv("HF_TOKEN")
 
-# OPTIMIZED: Safe Pydantic SecretStr injection to clear validation checks
 print("⏳ Initializing Low-Memory Hugging Face Cloud Embeddings API...")
 embeddings_model = HuggingFaceInferenceAPIEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2",
@@ -78,32 +80,51 @@ async def process_video(request: VideoRequest):
             
         print(f"🎥 Extracted Video ID: {video_id}")
         
-        # 2. Defensively Catching Transcript Library Variances
+        # 2. Extract Transcript USING ONLY LIST AND FETCH
         transcript_list = None
         try:
-            # Method A
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'hi'])
+            print("🔍 Fetching transcript via explicit list -> fetch mapping...")
+            
+            # Instance banao jiske paas list aur fetch hain
+            api_client = YouTubeTranscriptApi()
+            
+            # Step A: Raw transcript metadata list uthao
+            raw_transcript_data = api_client.list(video_id)
+            
+            # Step B: Direct content fetch karo jo list data object return karega
+            transcript_list = raw_transcript_data.fetch()
+            
+            print("✅ Transcript pieces pulled successfully via direct mapping.")
+
         except Exception as e:
-            print(f"⚠️ Method A failed ({str(e)}), switching to fallback Method B...")
-            try:
-                # Method B Fallback
-                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id).find_transcript(['en', 'hi']).fetch()
-            except Exception as inner_e:
-                print(f"❌ Both Transcript Methods Failed: {str(inner_e)}")
-                raise HTTPException(status_code=400, detail=f"Transcript not available: {str(inner_e)}")
+            print(f"❌ Low-Level Transcript Fetch Completely Failed: {str(e)}")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Transcript method mismatch or unavailable: {str(e)}"
+            )
 
         full_text = " ".join([item['text'] for item in transcript_list])
-        print(f"📝 Transcript fetched successfully! Length: {len(full_text)} characters.")
+        print(f"📝 Transcript built successfully! Length: {len(full_text)} characters.")
         
         # 3. Document Chunking
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         docs = text_splitter.create_documents([full_text])
+        print(f"✂️ Total split chunks created: {len(docs)}")
         
-        # 4. Building Vector Store
+        # 4. Building Vector Store Safely using Batches
         global db
-        db = FAISS.from_documents(docs, embeddings_model)
+        batch_size = 32
         
-        print("✅ Vector Index Created Successfully!")
+        print(f"🚀 Embedding first batch (0 to {min(batch_size, len(docs))})...")
+        db = FAISS.from_documents(docs[:batch_size], embeddings_model)
+        
+        for i in range(batch_size, len(docs), batch_size):
+            batch = docs[i:i + batch_size]
+            print(f"⏳ Embedding batch ({i} to {min(i + batch_size, len(docs))})...")
+            db.add_documents(batch)
+            time.sleep(0.5)
+        
+        print("✅ Vector Index Created Successfully for the entire video!")
         return {"status": "success", "video_id": video_id}
         
     except HTTPException as http_err:
