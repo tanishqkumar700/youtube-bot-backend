@@ -8,9 +8,10 @@ from dotenv import load_dotenv
 # YouTube and LangChain imports
 from youtube_transcript_api import YouTubeTranscriptApi
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-# OPTIMIZED: Using Groq for BOTH Embeddings and LLM to save RAM
-from langchain_groq import GroqEmbeddings, ChatGroq
+# FIXED IMPORT: Pulling GroqEmbeddings from community tools
+from langchain_community.embeddings import GroqEmbeddings
 from langchain_community.vectorstores import FAISS
+from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
@@ -42,8 +43,8 @@ db = None
 
 groq_api_key = os.getenv("GROQ_API_KEY")
 
-# OPTIMIZED: Using Groq's cloud embeddings instead of loading models into RAM
-print("⏳ Initializing Ultra-Lightweight Groq Cloud Embeddings...")
+# FIXED: Correct initialization of lightweight Cloud Embeddings via Groq
+print("⏳ Initializing Low-Memory Groq Cloud Embeddings...")
 embeddings_model = GroqEmbeddings(
     model_name="llama-3.1-8b-instant",
     groq_api_key=groq_api_key
