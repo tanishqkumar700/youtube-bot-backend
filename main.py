@@ -64,10 +64,10 @@ async def process_video(request: VideoRequest):
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         docs = text_splitter.create_documents([full_text])
         
-        # Pure Python calculation, NO INTERNET CALL REQUIRED
         retriever_store = BM25Retriever.from_documents(docs)
         retriever_store.k = 3
         
+        print("✅ Context Indexing Ready!")
         return {"status": "success", "video_id": video_id}
         
     except HTTPException as http_err:
@@ -82,12 +82,13 @@ async def ask_question(request: QuestionRequest):
         raise HTTPException(status_code=400, detail="No video context mapped yet.")
     
     try:
+        print(f"❓ Fetching context for question: {request.question}")
         relevant_docs = retriever_store.invoke(request.question)
         context = "\n\n".join(doc.page_content for doc in relevant_docs)
         
         template = """
         You are a helpful AI assistant that answers questions accurately based ONLY on the provided context transcript from a YouTube video.
-        If you do not know the answer, say "This information is not available in the video transcript."
+        If you do not know the answer, say "This information is not available in the video transcript." Do not invent facts.
 
         Context:
         {context}
@@ -97,9 +98,16 @@ async def ask_question(request: QuestionRequest):
 
         Helpful Answer:
         """
-        prompt = PromptTemplate.from_template(template).format(context=context, question=request.question)
-        response_text = groq_llm.predict(prompt)
+        # Formatted string prompt layout
+        prompt_content = TemplateContent = PromptTemplate.from_template(template).format(context=context, question=request.question)
+        
+        # FIXED: Using standard .invoke() wrapper to compile Groq response
+        response = groq_llm.invoke(prompt_content)
+        response_text = response.content
+        
+        print("⚡ Response compiled successfully via Groq LLM.")
         return {"status": "success", "answer": response_text}
         
     except Exception as e:
+        print(f"💥 QA Pipeline Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
